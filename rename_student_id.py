@@ -132,6 +132,8 @@ def main():
         "rename_student_id.py",
         "專案歷程.md",
         "驗證報告.md",
+        "操作說明報告.md",
+        "generate_actual_ui_details.py",
         "app.py",
         "index.html",
         "style.css",

@@ -87,20 +87,32 @@ function initEventListeners() {
     }
   });
 
-  // 載入自訂 URL (加分 2)
+  // 載入自訂 URL (加分 2) - 防呆檢查
   dom.btnLoadUrl.addEventListener('click', () => {
     const url = dom.datasetUrlInput.value.trim();
     if (!url) {
-      alert('請輸入有效的 CSV 檔案網址！');
+      alert('⚠️【防呆提示】請輸入有效的 CSV 檔案網址！');
+      dom.datasetUrlInput.focus();
+      return;
+    }
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      alert('⚠️【防呆提示】網址必須以 http:// 或 https:// 開頭！');
+      dom.datasetUrlInput.focus();
       return;
     }
     loadDatasetFromUrl(url);
   });
 
-  // 檔案上傳
+  // 檔案上傳 - 防呆檢查
   dom.fileInput.addEventListener('change', (e) => {
     const file = e.target.files[0];
     if (file) {
+      const fileNameLower = file.name.toLowerCase();
+      if (!fileNameLower.endsWith('.csv') && !fileNameLower.endsWith('.txt')) {
+        alert('⚠️【防呆提示】僅支援 CSV 格式檔案 (.csv)，請選擇正確的資料檔案！');
+        e.target.value = '';
+        return;
+      }
       uploadDatasetFile(file);
     }
   });
@@ -110,10 +122,14 @@ function initEventListeners() {
     dom.testRatioVal.textContent = `${Math.round(e.target.value * 100)}%`;
   });
 
-  // 目標變數變更
+  // 目標變數變更 - 防呆防止特徵包含目標變數
   dom.targetColSelect.addEventListener('change', (e) => {
     state.targetCol = e.target.value;
+    // 防呆：切換目標變數時，確保該目標欄位不會同時作為預測特徵
+    state.selectedFeatures = state.selectedFeatures.filter(f => f !== state.targetCol);
     updateFeatureChips();
+    // 自動重新訓練以反映新目標
+    setTimeout(runModelTraining, 100);
   });
 
   // 訓練模型按鈕
@@ -133,6 +149,17 @@ function initEventListeners() {
       if (targetPane) targetPane.classList.add('active');
     });
   });
+
+  // 支援 URL hash 切換標籤頁 (便於導覽與自動化檢驗)
+  function switchTabByHash() {
+    const hash = window.location.hash.replace('#', '');
+    if (hash) {
+      const btn = document.querySelector(`.tab-btn[data-tab="${hash}"]`);
+      if (btn) btn.click();
+    }
+  }
+  window.addEventListener('hashchange', switchTabByHash);
+  setTimeout(switchTabByHash, 300);
 }
 
 // 檢查後端狀態
@@ -400,7 +427,7 @@ function updateFeatureChips() {
         if (state.selectedFeatures.length > 1) {
           state.selectedFeatures = state.selectedFeatures.filter(f => f !== feat);
         } else {
-          alert('至少需保留 1 個預測特徵！');
+          alert('⚠️【防呆保護】多元線性回歸至少需保留 1 個預測特徵，無法取消選取最後一個特徵！');
           return;
         }
       } else {
@@ -873,12 +900,38 @@ function renderDeploymentInputs(features, stats) {
   });
 }
 
-// 7. 執行即時推論 (Deployment 預測)
+// 7. 執行即時推論 (Deployment 預測，具備完善防呆與異常值過濾)
 async function runInteractivePrediction() {
   const inputs = {};
+  const localWarnings = [];
+  const statMeans = (state.modelResults && state.modelResults.feature_stats && state.modelResults.feature_stats.means) || {};
+  const statMins = (state.modelResults && state.modelResults.feature_stats && state.modelResults.feature_stats.mins) || {};
+  const statMaxs = (state.modelResults && state.modelResults.feature_stats && state.modelResults.feature_stats.maxs) || {};
+
   document.querySelectorAll('.predict-input-val').forEach(inp => {
-    inputs[inp.getAttribute('data-feature')] = parseFloat(inp.value) || 0;
+    const feat = inp.getAttribute('data-feature');
+    const rawVal = inp.value.trim();
+    let val = parseFloat(rawVal);
+
+    // 防呆 1: 處理空白或輸入文字非數值
+    if (isNaN(val)) {
+      val = statMeans[feat] !== undefined ? statMeans[feat] : 0;
+      inp.value = Math.round(val * 100) / 100;
+      localWarnings.push(`特徵「${feat}」未輸入數值或為非數字，已自動補入平均值 (${inp.value})`);
+    } else {
+      // 防呆 2: 邊界與極端外插檢查
+      const fMin = statMins[feat];
+      const fMax = statMaxs[feat];
+      if (fMin !== undefined && val < 0 && fMin >= 0) {
+        localWarnings.push(`特徵「${feat}」輸入負數 (${val})，實體變數非負，請留意外插誤差`);
+      } else if (fMax !== undefined && val > fMax * 2.5) {
+        localWarnings.push(`特徵「${feat}」輸入值 (${val}) 超出訓練資料最大值 2.5 倍，屬外插推論`);
+      }
+    }
+    inputs[feat] = val;
   });
+
+  const warnBox = document.getElementById('predictWarningBox');
 
   if (state.backendAvailable) {
     try {
@@ -889,9 +942,27 @@ async function runInteractivePrediction() {
       });
       const data = await res.json();
       if (data.status === 'success') {
-        dom.predictVal.textContent = '$' + Math.round(data.prediction).toLocaleString();
-        dom.predictCI.textContent = `$${Math.round(data.confidence_interval_95.lower).toLocaleString()} ~ $${Math.round(data.confidence_interval_95.upper).toLocaleString()}`;
-        dom.predictPI.textContent = `$${Math.round(data.prediction_interval_95.lower).toLocaleString()} ~ $${Math.round(data.prediction_interval_95.upper).toLocaleString()}`;
+        const isProb = (state.targetCol && state.targetCol.toLowerCase().includes('prob')) || (data.prediction >= 0 && data.prediction <= 1);
+        const prefix = isProb ? '' : '$';
+        
+        dom.predictVal.textContent = isProb ? data.prediction.toFixed(4) : ('$' + Math.round(data.prediction).toLocaleString());
+        dom.predictCI.textContent = isProb 
+          ? `${data.confidence_interval_95.lower.toFixed(4)} ~ ${data.confidence_interval_95.upper.toFixed(4)}`
+          : `$${Math.round(data.confidence_interval_95.lower).toLocaleString()} ~ $${Math.round(data.confidence_interval_95.upper).toLocaleString()}`;
+        dom.predictPI.textContent = isProb 
+          ? `${data.prediction_interval_95.lower.toFixed(4)} ~ ${data.prediction_interval_95.upper.toFixed(4)}`
+          : `$${Math.round(data.prediction_interval_95.lower).toLocaleString()} ~ $${Math.round(data.prediction_interval_95.upper).toLocaleString()}`;
+
+        // 呈現防呆警示
+        const allWarnings = (data.warnings || []).concat(localWarnings);
+        if (warnBox) {
+          if (allWarnings.length > 0) {
+            warnBox.style.display = 'block';
+            warnBox.innerHTML = '<b>⚠️ 防呆與外插提醒：</b><br>' + allWarnings.map(w => `• ${w}`).join('<br>');
+          } else {
+            warnBox.style.display = 'none';
+          }
+        }
         return;
       }
     } catch (e) {
@@ -899,7 +970,7 @@ async function runInteractivePrediction() {
     }
   }
 
-  // 客戶端預測計算
+  // 客戶端備援預測計算
   if (!state.modelResults || !state.modelResults.coef_table) return;
   const coefs = state.modelResults.coef_table;
   let pred = coefs.find(c => c.feature === 'const')?.coef || 0;
@@ -908,11 +979,26 @@ async function runInteractivePrediction() {
     if (cObj) pred += cObj.coef * inputs[f];
   });
 
-  const se = state.modelResults.metrics.rmse * 0.1;
-  const seIndiv = state.modelResults.metrics.rmse;
-  dom.predictVal.textContent = '$' + Math.round(pred).toLocaleString();
-  dom.predictCI.textContent = `$${Math.round(pred - 1.96*se).toLocaleString()} ~ $${Math.round(pred + 1.96*se).toLocaleString()}`;
-  dom.predictPI.textContent = `$${Math.round(pred - 1.96*seIndiv).toLocaleString()} ~ $${Math.round(pred + 1.96*seIndiv).toLocaleString()}`;
+  const isProb = (state.targetCol && state.targetCol.toLowerCase().includes('prob')) || (pred >= 0 && pred <= 1);
+  const se = (state.modelResults.metrics.rmse || 1000) * 0.1;
+  const seIndiv = state.modelResults.metrics.rmse || 5000;
+
+  dom.predictVal.textContent = isProb ? pred.toFixed(4) : ('$' + Math.round(pred).toLocaleString());
+  dom.predictCI.textContent = isProb
+    ? `${(pred - 1.96*se).toFixed(4)} ~ ${(pred + 1.96*se).toFixed(4)}`
+    : `$${Math.round(pred - 1.96*se).toLocaleString()} ~ $${Math.round(pred + 1.96*se).toLocaleString()}`;
+  dom.predictPI.textContent = isProb
+    ? `${(pred - 1.96*seIndiv).toFixed(4)} ~ ${(pred + 1.96*seIndiv).toFixed(4)}`
+    : `$${Math.round(pred - 1.96*seIndiv).toLocaleString()} ~ $${Math.round(pred + 1.96*seIndiv).toLocaleString()}`;
+
+  if (warnBox) {
+    if (localWarnings.length > 0) {
+      warnBox.style.display = 'block';
+      warnBox.innerHTML = '<b>⚠️ 防呆與外插提醒：</b><br>' + localWarnings.map(w => `• ${w}`).join('<br>');
+    } else {
+      warnBox.style.display = 'none';
+    }
+  }
 }
 
 function showLoading(msg) {

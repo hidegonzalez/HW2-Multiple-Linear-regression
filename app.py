@@ -68,45 +68,79 @@ CURRENT_MODEL = {
 
 
 def load_dataframe_from_source(source_type, source_val):
-    """從不同來源載入 DataFrame"""
+    """從不同來源載入 DataFrame，具備完善防呆與異常格式檢查機制"""
     if source_type == 'preset':
         if source_val not in DATASET_PRESETS:
-            raise ValueError(f"Unknown preset dataset: {source_val}")
+            raise ValueError(f"未知的預設問題資料集識別碼：{source_val}")
         preset = DATASET_PRESETS[source_val]
         if not os.path.exists(preset['file']):
-            raise FileNotFoundError(f"Preset file not found: {preset['file']}")
-        df = pd.read_csv(preset['file'])
+            raise FileNotFoundError(f"伺服器端找不到預設資料集檔案：{preset['file']}")
+        try:
+            df = pd.read_csv(preset['file'])
+        except Exception as e:
+            raise ValueError(f"預設資料集讀取失敗：{str(e)}")
+            
         for col in preset.get('drop_cols', []):
             if col in df.columns:
                 df = df.drop(columns=[col])
         return df, preset['default_target'], preset['name'], preset['description']
     
     elif source_type == 'url':
-        url = source_val.strip()
+        url = str(source_val).strip()
         if not (url.startswith('http://') or url.startswith('https://')):
-            raise ValueError("URL 必須以 http:// 或 https:// 開頭")
+            raise ValueError("【防呆警告】網址格式錯誤！URL 必須以 http:// 或 https:// 開頭。")
         
-        req = urllib.request.Request(
-            url, 
-            headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-        )
-        with urllib.request.urlopen(req, timeout=15) as response:
-            content = response.read()
-        df = pd.read_csv(io.BytesIO(content))
-        name = f"線上資料集 ({os.path.basename(url.split('?')[0])})"
-        desc = f"從線上 URL 成功載入：{url}"
+        try:
+            req = urllib.request.Request(
+                url, 
+                headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+            )
+            with urllib.request.urlopen(req, timeout=12) as response:
+                content = response.read()
+        except urllib.error.HTTPError as e:
+            raise ValueError(f"【連線異常】無法自該網址下載檔案 (HTTP 狀態碼 {e.code})，請確認連結是否正確且公開可存取。")
+        except urllib.error.URLError as e:
+            raise ValueError(f"【連線逾時/失敗】無法連線至遠端伺服器 ({e.reason})，請確認網路環境與網址拼字。")
+        except Exception as e:
+            raise ValueError(f"【下載失敗】網路下載過程發生未知錯誤：{str(e)}")
+            
+        try:
+            df = pd.read_csv(io.BytesIO(content))
+        except pd.errors.EmptyDataError:
+            raise ValueError("【檔案內容異常】下載的 CSV 檔案內容為空，無法進行分析！")
+        except Exception as e:
+            raise ValueError(f"【解析失敗】無法將該網址內容解析為 CSV 表格：{str(e)}")
+            
+        if len(df) == 0:
+            raise ValueError("【防呆警告】該資料集樣本數為 0，無法進行回歸分析！")
+            
+        name = f"線上自訂資料集 ({os.path.basename(url.split('?')[0])})"
+        desc = f"從線上 URL 成功載入：{url} (共 {len(df)} 筆樣本、{len(df.columns)} 欄位)"
         target = df.columns[-1]
         return df, target, name, desc
 
     elif source_type == 'upload':
         file_storage = source_val
-        df = pd.read_csv(file_storage)
-        name = f"上傳檔案 ({file_storage.filename})"
-        desc = f"由使用者本機上傳之 CSV 檔案，共 {len(df)} 筆資料。"
+        filename = getattr(file_storage, 'filename', '')
+        if not filename or not filename.lower().endswith(('.csv', '.txt')):
+            raise ValueError("【防呆警告】僅支援 CSV 格式檔案 (.csv)！請檢查上傳檔案的副檔名。")
+            
+        try:
+            df = pd.read_csv(file_storage)
+        except pd.errors.EmptyDataError:
+            raise ValueError("【檔案內容異常】上傳的 CSV 檔案為空檔案！")
+        except Exception as e:
+            raise ValueError(f"【解析失敗】無法讀取上傳之 CSV 檔案：{str(e)}")
+            
+        if len(df) == 0:
+            raise ValueError("【防呆警告】上傳檔案中無任何資料列！")
+            
+        name = f"本機上傳檔案 ({filename})"
+        desc = f"由使用者自本機上傳之資料集，成功解析 {len(df)} 筆資料、{len(df.columns)} 欄位。"
         target = df.columns[-1]
         return df, target, name, desc
     else:
-        raise ValueError("Invalid source_type")
+        raise ValueError(f"不支援的資料來源類別：{source_type}")
 
 
 @app.route('/')
@@ -226,12 +260,21 @@ def api_train():
             target_col = df.columns[-1]
 
         requested_features = data.get('features', [])
+        # 防呆 1: 目標變數防呆 (移除重複出現在特徵中的目標欄位，避免資訊外洩 R²=1)
+        requested_features = [f for f in requested_features if f != target_col and f in df.columns]
+
+        # 防呆 2: 若特徵清單被使用者全數清空，自動備援所有數值特徵
         if not requested_features:
             requested_features = [c for c in df.select_dtypes(include=[np.number]).columns if c != target_col]
 
+        # 防呆 3: 移除全為常數 (零變異數) 的無效特徵，避免奇異矩陣
+        valid_features = [f for f in requested_features if df[f].nunique() > 1]
+        if valid_features:
+            requested_features = valid_features
+
         df_clean = df[[target_col] + requested_features].dropna()
         if len(df_clean) < 10:
-            return jsonify({'status': 'error', 'message': '有效數據筆數過少 (< 10 筆)，無法訓練回歸模型'}), 400
+            return jsonify({'status': 'error', 'message': f'有效數據筆數過少 (僅 {len(df_clean)} 筆)，至少需 10 筆樣本才能進行回歸分析'}), 400
 
         X = df_clean[requested_features]
         y = df_clean[target_col]
@@ -438,22 +481,50 @@ def api_train():
 
 @app.route('/api/predict', methods=['POST'])
 def api_predict():
-    """執行單筆房屋/樣本即時推論 (Deployment 即時預測服務)"""
+    """執行單筆房屋/樣本即時推論 (Deployment 即時預測服務，具備完整防呆與邊界極端值檢查)"""
     try:
         global CURRENT_MODEL
         if CURRENT_MODEL['stats_model'] is None:
-            return jsonify({'status': 'error', 'message': '模型尚未訓練，請先執行訓練'}), 400
+            return jsonify({'status': 'error', 'message': '【防呆提示】模型尚未訓練，請先點擊「開始訓練回歸模型」'}), 400
         
         data = request.get_json() or {}
         inputs = data.get('inputs', {})
         
         feats = CURRENT_MODEL['selected_features']
         input_row = {}
+        sanitized_warnings = []
+
         for f in feats:
-            if f in inputs:
-                input_row[f] = float(inputs[f])
-            else:
-                input_row[f] = CURRENT_MODEL['train_means'].get(f, 0.0)
+            raw_val = inputs.get(f)
+            # 防呆 1: 處理未填寫、空字串或 None
+            if raw_val is None or str(raw_val).strip() == '':
+                default_mean = float(CURRENT_MODEL['train_means'].get(f, 0.0))
+                input_row[f] = default_mean
+                sanitized_warnings.append(f"特徵「{f}」未輸入數值，防呆機制已自動補入訓練平均值 {default_mean:.2f}")
+                continue
+
+            # 防呆 2: 處理文字輸入、NaN 或 Inf
+            try:
+                val = float(raw_val)
+                if np.isnan(val) or np.isinf(val):
+                    default_mean = float(CURRENT_MODEL['train_means'].get(f, 0.0))
+                    input_row[f] = default_mean
+                    sanitized_warnings.append(f"特徵「{f}」為非法數值 (NaN/Inf)，已自動替換為平均值 {default_mean:.2f}")
+                else:
+                    input_row[f] = val
+            except (ValueError, TypeError):
+                default_mean = float(CURRENT_MODEL['train_means'].get(f, 0.0))
+                input_row[f] = default_mean
+                sanitized_warnings.append(f"特徵「{f}」輸入「{raw_val}」非有效數字，已自動替換為平均值 {default_mean:.2f}")
+
+            # 防呆 3: 極端外插值預警 (輸入值若超出訓練資料最大值 3 倍或最小值小於 0 針對實體計數特徵)
+            train_min = float(CURRENT_MODEL['train_mins'].get(f, 0.0))
+            train_max = float(CURRENT_MODEL['train_maxs'].get(f, 100.0))
+            cur_val = input_row[f]
+            if cur_val < 0 and train_min >= 0:
+                sanitized_warnings.append(f"特徵「{f}」輸入負值 ({cur_val})，實務上物理特徵通常大於等於 0，請留意外插誤差！")
+            elif cur_val > train_max * 2.5:
+                sanitized_warnings.append(f"特徵「{f}」數值 ({cur_val}) 大幅超越訓練集最大值 ({train_max:.1f})，屬極端外插預測！")
 
         df_input = pd.DataFrame([input_row])
         df_input_const = sm.add_constant(df_input, has_constant='add')
@@ -474,7 +545,12 @@ def api_predict():
             'prediction': y_pred,
             'confidence_interval_95': {'lower': ci_lower, 'upper': ci_upper},
             'prediction_interval_95': {'lower': pi_lower, 'upper': pi_upper},
-            'inputs_used': input_row
+            'inputs_used': input_row,
+            'warnings': sanitized_warnings
+        })
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'status': 'error', 'message': f"預測計算失敗：{str(e)}"}), 400
         })
     except Exception as e:
         traceback.print_exc()

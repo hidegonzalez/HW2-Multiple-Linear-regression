@@ -140,7 +140,8 @@ def main():
         "app.js",
         "Procfile",
         "render.yaml",
-        ".gitignore"
+        ".gitignore",
+        ".nojekyll"
     ]
 
     folders_to_pack = [

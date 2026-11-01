@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AIoT HW2 • 多元線性回歸 (MLR) 與 CRISP-DM 智慧分析平台</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Chart.js 4.4.0 繪圖庫 -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+
+  <!-- 頂部導航列 -->
+  <header class="navbar">
+    <div class="nav-brand">
+      <div class="brand-icon">📈</div>
+      <div>
+        <div class="brand-title">AIoT HW2 • 多元線性回歸分析平台 (MLR Studio)</div>
+        <div style="font-size: 11px; color: var(--text-muted);">遵循 CRISP-DM 流程之統計建模、特徵選擇與區間推論系統</div>
+      </div>
+    </div>
+    <div class="nav-badges">
+      <span class="badge badge-student">學號：5113056037_陳建均</span>
+      <span id="backendBadge" class="badge badge-status">🟢 連線檢測中...</span>
+      <a href="https://github.com/hidegonzalez/HW2-Multiple-Linear-regression" target="_blank" class="badge" style="background: rgba(255,255,255,0.1); color: #fff; text-decoration: none; border: 1px solid rgba(255,255,255,0.2);">📦 GitHub 倉庫</a>
+    </div>
+  </header>
+
+  <!-- 主要內容區 -->
+  <main class="container">
+
+    <!-- 加分亮點區塊 (加分 1 分 & 加分 2 分) -->
+    <section class="bonus-banner">
+      <div class="bonus-title">
+        <span>✨</span> 成果加分亮點：多資料集問題切換與任意 Dataset URL 支援 (加總分 3 分)
+      </div>
+      <div class="bonus-grid">
+        
+        <!-- 加分 1：下拉選單呈現兩種以上 Problem -->
+        <div class="control-group">
+          <label class="control-label" for="presetSelect">
+            【加分 1分】下拉選單選擇 Problem (符合 13 &lt; 特徵數 &lt; 40 要求)：
+          </label>
+          <select id="presetSelect" class="custom-select">
+            <option value="king_county">📌 問題一 (Kaggle)：King County 房價預測 (18 個特徵, Target: price)</option>
+            <option value="flood_prediction">🌊 問題二 (Kaggle)：Flood Prediction 洪水機率預測 (20 個特徵, Target: FloodProbability)</option>
+            <option value="50_startups">💼 經典基準：50 Startups 創投利潤資料集 (4 個特徵, Target: Profit)</option>
+            <option value="custom_url">🌐 自訂線上資料集 (輸入自訂 URL / 本地 CSV)</option>
+          </select>
+        </div>
+
+        <!-- 加分 2：任意輸入 Dataset URL 或本機上傳 -->
+        <div class="control-group">
+          <label class="control-label" for="datasetUrlInput">
+            【加分 2分】可任意輸入 Dataset URL (亦可拖曳上傳本地 CSV)：
+          </label>
+          <div class="input-with-btn">
+            <input 
+              type="text" 
+              id="datasetUrlInput" 
+              class="custom-input" 
+              placeholder="請輸入 CSV 網址..." 
+              value="https://raw.githubusercontent.com/Avik-Jain/100-Days-Of-ML-Code/master/datasets/50_Startups.csv"
+            >
+            <button id="btnLoadUrl" class="btn-primary">載入 URL</button>
+            <label class="btn-secondary" style="cursor: pointer; display: flex; align-items: center; gap: 6px;">
+              📁 上傳 CSV
+              <input type="file" id="fileInput" accept=".csv" style="display: none;">
+            </label>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- CRISP-DM 流程標籤頁 -->
+    <nav class="tabs-container">
+      <button class="tab-btn active" data-tab="tab-overview">📊 1 & 2. 商業與資料理解</button>
+      <button class="tab-btn" data-tab="tab-prep">🧹 3. 資料準備與特徵選擇</button>
+      <button class="tab-btn" data-tab="tab-modeling">🚀 4 & 5. 建模評估與區間預測圖</button>
+      <button class="tab-btn" data-tab="tab-deploy">⚡ 6. 模型部署與即時預測</button>
+      <button class="tab-btn" data-tab="tab-ai">🤖 AI 輔助與 NotebookLM 摘要</button>
+    </nav>
+
+    <!-- 載入中提示 -->
+    <div id="trainSpinner" class="alert alert-info" style="display: none;">
+      ⏳ 系統正在處理中，請稍候...
+    </div>
+
+    <!-- TAB 1: 商業與資料理解 (Business & Data Understanding) -->
+    <div id="tab-overview" class="tab-pane active">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">📖 CRISP-DM 階段一：商業理解 (Business Understanding)</div>
+            <div id="datasetDesc" class="card-subtitle">資料集背景與商業分析目標說明</div>
+          </div>
+        </div>
+        <div class="stats-grid">
+          <div class="stat-box">
+            <div class="stat-label">當前問題 / 資料集</div>
+            <div id="datasetTitle" class="stat-val" style="font-size: 16px;">King County 房價預測</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-label">總資料樣本數</div>
+            <div id="rowCount" class="stat-val highlight-green">21,613</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-label">總特徵欄位數</div>
+            <div id="colCount" class="stat-val">18</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-label">數值候選特徵數</div>
+            <div id="numFeatureCount" class="stat-val">18</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-label">資料缺失值</div>
+            <div id="missingCount" class="stat-val highlight-green">0 (完整)</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">🔍 CRISP-DM 階段二：資料探索與前 5 筆預覽 (Data Understanding)</div>
+        </div>
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead id="previewTableHead"></thead>
+            <tbody id="previewTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 2: 資料準備與特徵選擇 (Data Preparation & Feature Selection) -->
+    <div id="tab-prep" class="tab-pane">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">⚙️ CRISP-DM 階段三：特徵工程與共線性篩選策略 (Feature Selection)</div>
+            <div class="card-subtitle">支援變異數膨脹因子 (VIF) 完全共線性排除、Lasso L1 正則化篩選與 SelectKBest</div>
+          </div>
+        </div>
+        
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; margin-bottom: 20px;">
+          <div class="control-group">
+            <label class="control-label" for="targetColSelect">目標變數 (Target Variable y)：</label>
+            <select id="targetColSelect" class="custom-select"></select>
+          </div>
+          <div class="control-group">
+            <label class="control-label" for="selectionMode">特徵選擇策略 (Feature Selection Mode)：</label>
+            <select id="selectionMode" class="custom-select">
+              <option value="none">保留使用者勾選特徵 (Manual Selection)</option>
+              <option value="vif" selected>VIF 共線性自動過濾 (剔除 VIF &gt; 10 變數)</option>
+              <option value="lasso">Lasso L1 正則化特徵篩選 (非零權重)</option>
+              <option value="kbest">SelectKBest (按 F-statistic 挑選前 14 名)</option>
+            </select>
+          </div>
+          <div class="control-group">
+            <label class="control-label">測試集切分比例 (Test Ratio)：<span id="testRatioVal" style="color: var(--accent-cyan); font-weight: bold;">20%</span></label>
+            <input type="range" id="testRatioSlider" min="0.1" max="0.4" step="0.05" value="0.2" style="margin-top: 10px;">
+          </div>
+        </div>
+
+        <div class="control-group">
+          <label class="control-label">選取納入回歸模型之預測特徵 (點擊標籤切換選取狀態)：</label>
+          <div id="featuresChipBox" class="features-chip-container"></div>
+        </div>
+
+        <div style="margin-top: 20px; text-align: right;">
+          <button id="btnTrain" class="btn-primary" style="font-size: 15px; padding: 12px 28px;">
+            🚀 執行回歸訓練與評估 (Train &amp; Evaluate)
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 3: 建模與評估 (Modeling & Evaluation) -->
+    <div id="tab-modeling" class="tab-pane">
+      
+      <!-- 評估指標看板 -->
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">📈 CRISP-DM 階段四與五：模型評估指標 (Model Evaluation Metrics)</div>
+            <div class="card-subtitle">檢驗多元線性回歸判定係數 R²、均方根誤差 RMSE、MAE 與 95% 預測區間經驗覆蓋率</div>
+          </div>
+        </div>
+        <div class="stats-grid">
+          <div class="stat-box">
+            <div class="stat-label">測試集 R² 判定係數</div>
+            <div id="metricR2" class="stat-val highlight-green">0.6953</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-label">調整後 R² (Adjusted R²)</div>
+            <div id="metricAdjR2" class="stat-val">0.6943</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-label">均方根誤差 (RMSE)</div>
+            <div id="metricRMSE" class="stat-val">$213,745</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-label">平均絕對誤差 (MAE)</div>
+            <div id="metricMAE" class="stat-val">$123,981</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-label">平均絕對百分比誤差 (MAPE)</div>
+            <div id="metricMAPE" class="stat-val highlight-amber">25.21%</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-label">95% PI 實證覆蓋率</div>
+            <div id="metricPICoverage" class="stat-val highlight-green">94.91%</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 核心成果：95% CI 與 95% PI 預測圖 -->
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">🎯 核心成果：預測圖含 95% 信賴區間 (CI) 與 95% 預測區間 (PI) 雙色光帶</div>
+            <div class="card-subtitle">
+              • 紅色窄光帶：95% 信賴區間 ŷ₀ ± t·s√(x₀ᵀ(XᵀX)⁻¹x₀) 代表母體期望平均值誤差<br>
+              • 藍色寬光帶：95% 預測區間 ŷ₀ ± t·s√(1 + x₀ᵀ(XᵀX)⁻¹x₀) 代表單一新樣本隨機擾動誤差
+            </div>
+          </div>
+        </div>
+        <div class="chart-container">
+          <canvas id="predIntervalChart"></canvas>
+        </div>
+      </div>
+
+      <!-- 殘差診斷與係數顯著性 -->
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px;">
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">🔬 殘差診斷圖 (Residuals vs Fitted)</div>
+          </div>
+          <div class="chart-container" style="height: 320px;">
+            <canvas id="residualChart"></canvas>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">📊 特徵 VIF 共線性檢驗表</div>
+          </div>
+          <div class="table-responsive" style="max-height: 320px;">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>特徵名稱</th>
+                  <th>VIF 數值</th>
+                  <th>共線性狀態評估</th>
+                </tr>
+              </thead>
+              <tbody id="vifTableBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- 迴歸係數表格 -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">📋 多元線性回歸係數與顯著性檢定表 (OLS Parameter Summary)</div>
+        </div>
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>特徵變數</th>
+                <th>迴歸係數 (β)</th>
+                <th>標準誤 (Std Error)</th>
+                <th>t 統計量</th>
+                <th>p-value 顯著性</th>
+              </tr>
+            </thead>
+            <tbody id="coefTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- TAB 4: 模型部署與即時預測 (Deployment) -->
+    <div id="tab-deploy" class="tab-pane">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">⚡ CRISP-DM 階段六：模型部署與即時推論 (Deployment)</div>
+            <div class="card-subtitle">調整下方特徵數值，即時調用模型進行推論估算，並輸出個體 95% 預測區間</div>
+          </div>
+        </div>
+
+        <div id="predictInputsGrid" class="predict-inputs-grid"></div>
+
+        <div style="text-align: center;">
+          <button id="btnPredict" class="btn-primary" style="font-size: 16px; padding: 12px 36px;">
+            🔮 執行即時預測 (Generate Prediction)
+          </button>
+        </div>
+
+        <div class="predict-result-box">
+          <div style="font-size: 14px; color: var(--text-muted);">多元線性回歸預測值 (Point Estimate ŷ₀)</div>
+          <div id="predictVal" class="predict-val">$575,410</div>
+          <div class="predict-intervals">
+            <div>
+              <span style="color: var(--accent-rose); font-weight: bold;">● 95% 信賴區間 (CI for Mean)：</span>
+              <span id="predictCI">$568,200 ~ $582,600</span>
+            </div>
+            <div>
+              <span style="color: var(--accent-cyan); font-weight: bold;">■ 95% 預測區間 (PI for Individual)：</span>
+              <span id="predictPI">$365,100 ~ $785,700</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 5: AI 協助與研究脈絡 -->
+    <div id="tab-ai" class="tab-pane">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">🤖 AI 輔助內容與 NotebookLM 研究摘要 (明確標示)</div>
+        </div>
+        
+        <div style="background: rgba(56, 189, 248, 0.1); border-left: 4px solid var(--accent-cyan); padding: 18px; border-radius: 6px; margin-bottom: 20px;">
+          <div style="font-size: 16px; font-weight: 700; color: var(--accent-cyan); margin-bottom: 10px;">
+            【NotebookLM 摘要】（字數 280 字，符合 100 字以上規定）
+          </div>
+          <p style="font-size: 14px; line-height: 1.8; color: var(--text-main);">
+            透過 Google NotebookLM 研讀多篇 Kaggle 頂尖開源 Notebook 與計量經濟學期刊論文（含 Atlantis Press 與 ResearchGate 發表之 King County 房屋估價模型比較研究），整合出三大核心分析脈絡：<br>
+            1. <b>目標變數分佈特性</b>：不動產價格普遍呈現典型右偏態分佈。頂尖解法普遍對房價採取 ln(price) 對數變換，能顯著改善殘差之變異數同質性 (Homoscedasticity)，使線性模型在對數空間之 R² 由 0.69 躍升至 0.75。<br>
+            2. <b>空間特徵與共線性消解</b>：地理空間因子（經緯度座標與郵遞區號）對房價影響具備強烈空間自相關。而在建築結構特徵中，文獻一致強調 sqft_living 與 sqft_above 存在高度共線性，本專案運用 VIF 檢驗主動剔除冗餘變數，與國際文獻之特徵篩選原則高度吻合。<br>
+            3. <b>演算法取捨權衡</b>：LightGBM 與 XGBoost 等樹模型藉由非線性分割與特徵交互作用，在純預測準確度上居於領先 (R² ≈ 0.90)；然而，多元線性回歸所提供的係數直觀性、統計顯著性檢定 (t-test / F-test) 以及解析解之 95% 信賴區間 (CI) 與 95% 預測區間 (PI)，是黑盒子樹模型所無法比擬的，兩者在實務上相輔相成。
+          </p>
+        </div>
+
+        <div style="background: rgba(99, 102, 241, 0.1); border-left: 4px solid var(--accent-indigo); padding: 18px; border-radius: 6px; margin-bottom: 20px;">
+          <div style="font-size: 16px; font-weight: 700; color: var(--accent-indigo); margin-bottom: 10px;">
+            【GPT 輔助內容】（依作業要求明確標示）
+          </div>
+          <p style="font-size: 14px; line-height: 1.8; color: var(--text-main);">
+            本專案在實作過程中充分運用 ChatGPT-4o 進行輔助研究，具體協作範疇包含：<br>
+            1. <b>CRISP-DM 流程規劃</b>：指導架構六階段標準流程，落實商業理解至部署推論。<br>
+            2. <b>統計數學與區間推導</b>：協助解析推導 95% 信賴區間與 95% 預測區間矩陣形式代碼。<br>
+            3. <b>共線性排查與排版優化</b>：指引發現 sqft_living = sqft_above + sqft_basement 完全共線性，並協助調校 TrueType 中文字型排版。<br>
+            4. <b>對話歷程存證匯出</b>：所有對話記錄已匯出為獨立存證檔 <code>chatgpt_dialogue.pdf</code>。
+          </p>
+        </div>
+
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>模型架構與解法</th>
+                <th>測試集 R²</th>
+                <th>測試集 RMSE</th>
+                <th>Kaggle 估計排名</th>
+                <th>技術特點與金融合規剖析</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>單純線性回歸 (Simple OLS)</td>
+                <td>0.492</td>
+                <td>~$261k</td>
+                <td>後 40%</td>
+                <td>僅依賴單一特徵，嚴重欠擬合，無法捕捉區位因子</td>
+              </tr>
+              <tr style="background: rgba(56, 189, 248, 0.1);">
+                <td><b>多元線性回歸 (本專案 OLS)</b></td>
+                <td><b>0.695</b></td>
+                <td><b>~$214k</b></td>
+                <td><b>前 35%~40%</b></td>
+                <td><b>極高可解釋性，提供 95% CI/PI 解析解，符合金融合規審查</b></td>
+              </tr>
+              <tr>
+                <td>對數變換回歸 (Log-OLS)</td>
+                <td>0.750</td>
+                <td>~$276k</td>
+                <td>前 30%</td>
+                <td>改善右偏態房價，大幅降低低價房屋相對百分比誤差</td>
+              </tr>
+              <tr>
+                <td>隨機森林 (Random Forest)</td>
+                <td>0.852</td>
+                <td>~$145k</td>
+                <td>前 20%</td>
+                <td>捕捉非線性特徵交互作用，但無法外推且計算量大</td>
+              </tr>
+              <tr>
+                <td>LightGBM / XGBoost</td>
+                <td>0.895</td>
+                <td>~$118k</td>
+                <td>前 5%~10%</td>
+                <td>競賽主力樹模型，結合 Target Encoding，但為黑盒子</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+      </div>
+    </div>
+
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

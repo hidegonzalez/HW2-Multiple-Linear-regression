@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: aiot-hw2-mlr
+    env: python
+    region: singapore
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python app.py
+    envVars:
+      - key: PORT
+        value: 10000

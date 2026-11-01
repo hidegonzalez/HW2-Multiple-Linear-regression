@@ -1,0 +1,16 @@
+[
+  "bedrooms",
+  "bathrooms",
+  "sqft_living",
+  "sqft_lot",
+  "floors",
+  "waterfront",
+  "view",
+  "condition",
+  "grade",
+  "house_age",
+  "is_renovated",
+  "lat",
+  "long",
+  "sqft_living15"
+]

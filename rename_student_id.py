@@ -148,7 +148,8 @@ def main():
         "data",
         "figures",
         "models",
-        ".github"
+        "skills",
+        ".agents"
     ]
 
     with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:

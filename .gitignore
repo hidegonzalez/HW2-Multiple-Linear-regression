@@ -40,3 +40,4 @@ venv.bak/
 test_verification/
 *.log
 _current_session.csv
+/skill
